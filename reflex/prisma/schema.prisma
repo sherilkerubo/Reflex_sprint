@@ -1,0 +1,105 @@
+// Reflex production data layer — PostgreSQL via Prisma, exactly as specified
+// in the architecture doc (users, deliveries, delivery_locations, audit_logs).
+//
+// The runnable demo in /backend uses an in-memory store with the same field
+// shapes (see backend/src/store/db.js) so the app runs with zero setup.
+// To go to production:
+//   1. `npm install prisma @prisma/client` in /backend
+//   2. Point DATABASE_URL at a real Postgres instance (enable PostGIS if you
+//      want native proximity dispatching, per the doc's "Defense Rationale")
+//   3. `npx prisma migrate dev`
+//   4. Reimplement the functions in backend/src/store/db.js against
+//      `prisma.<model>.*` calls — the function signatures don't need to change,
+//      only their bodies, since every route/service calls the store through
+//      that one module.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  RETAILER
+  DISPATCHER
+  RIDER
+}
+
+enum DeliveryStatus {
+  CREATED
+  ASSIGNED
+  PICKED_UP
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  phone     String   @unique
+  role      UserRole
+  createdAt DateTime @default(now()) @map("created_at")
+
+  deliveriesAsRetailer Delivery[]  @relation("RetailerDeliveries")
+  deliveriesAsRider    Delivery[]  @relation("RiderDeliveries")
+  auditLogsChanged     AuditLog[]
+
+  @@map("users")
+}
+
+model Delivery {
+  id               String         @id @default(uuid()) @db.Uuid
+  trackingNumber   String         @unique @map("tracking_number") @db.VarChar(16)
+  retailerId       String         @map("retailer_id") @db.Uuid
+  riderId          String?        @map("rider_id") @db.Uuid
+  customerName     String         @map("customer_name")
+  customerPhone    String         @map("customer_phone")
+  deliveryAddress  String         @map("delivery_address")
+  itemDescription  String         @map("item_description")
+  status           DeliveryStatus @default(CREATED)
+  releaseCodeHash  String         @map("release_code_hash") // bcrypt hash of the 6-digit OTP
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at")
+
+  retailer  User               @relation("RetailerDeliveries", fields: [retailerId], references: [id])
+  rider     User?              @relation("RiderDeliveries", fields: [riderId], references: [id])
+  locations DeliveryLocation[]
+  auditLogs AuditLog[]
+
+  @@map("deliveries")
+}
+
+// Real-time telemetry history. In production, promote latitude/longitude to
+// a native `geography(Point, 4326)` column via PostGIS for proximity
+// dispatching, as called out in the stack's defense rationale.
+model DeliveryLocation {
+  id         String   @id @default(uuid()) @db.Uuid
+  deliveryId String   @map("delivery_id") @db.Uuid
+  latitude   Float
+  longitude  Float
+  recordedAt DateTime @default(now()) @map("recorded_at")
+
+  delivery Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryId, recordedAt])
+  @@map("delivery_locations")
+}
+
+// Immutable audit trail of every status transition, for defense/compliance.
+model AuditLog {
+  id               String          @id @default(uuid()) @db.Uuid
+  deliveryId       String          @map("delivery_id") @db.Uuid
+  previousStatus   DeliveryStatus? @map("previous_status")
+  newStatus        DeliveryStatus  @map("new_status")
+  changedById      String          @map("changed_by") @db.Uuid
+  timestamp        DateTime        @default(now())
+
+  delivery  Delivery @relation(fields: [deliveryId], references: [id])
+  changedBy User     @relation(fields: [changedById], references: [id])
+
+  @@map("audit_logs")
+}
