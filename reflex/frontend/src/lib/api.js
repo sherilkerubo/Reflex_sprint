@@ -1,4 +1,6 @@
-const BASE = "/api";
+
+const API_ORIGIN = import.meta.env.VITE_API_URL || "";
+const BASE = `${API_ORIGIN}/api`;
 
 function getToken() {
   return localStorage.getItem("reflex_token");

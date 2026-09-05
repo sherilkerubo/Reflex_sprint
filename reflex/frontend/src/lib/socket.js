@@ -1,9 +1,8 @@
 import { io } from "socket.io-client";
 
-// Single shared socket for the whole app. Board-wide events (delivery:new,
-// delivery:assigned, etc.) arrive unscoped; components additionally
-// `subscribe(id)` to a delivery room for location pings scoped to one job.
-export const socket = io({
+const API_ORIGIN = import.meta.env.VITE_API_URL || undefined;
+
+export const socket = io(API_ORIGIN, {
   path: "/socket.io",
   autoConnect: true,
 });
